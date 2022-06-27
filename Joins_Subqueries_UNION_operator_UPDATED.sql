@@ -1,3 +1,6 @@
+-------------------------------------------------------------------------------------------------------------------------------------
+-- Pre-requisites
+-------------------------------------------------------------------------------------------------------------------------------------
 -- Create suppliers and suppliers_addresses tables 
 -- (same as customers and customers_addresses tables, reuse script with different names)
 
@@ -22,6 +25,9 @@ VALUES (001,'Nick Clements','nick@email.com','+44765982735',34,TRUE,TRUE,CURRENT
        (005,'Abby Simons','abbys@email.com','+44775982735',40,TRUE,TRUE,CURRENT_TIMESTAMP,NULL,NULL,'Just an example text for Abby'),
        (007,'Sarah Pickering','sp@email.com','+44765333735',67,TRUE,TRUE,CURRENT_TIMESTAMP,NULL,NULL,'Just an example text for Sarah');
 
+INSERT INTO customers (customer_id,customer_name,customer_email,customer_phone,customer_age,gdpr_status,customer_profile_status,date_profile_created,date_profile_deactivated,deactivation_reason,customer_notes)
+VALUES (777,'Test Name','test@email.com','+44888982735',33,TRUE,TRUE,CURRENT_TIMESTAMP,NULL,NULL,'Just an example tesst');   
+      
 -- Dropping the table
 DROP TABLE customers;
 
@@ -32,7 +38,7 @@ DROP TABLE customers;
 -- 1) Create 1:1 relationship between customers and customers_addresses tables
 CREATE TABLE customers_addresses (
 customer_addresses_id SERIAL PRIMARY KEY,
-customer_id INT NOT NULL,
+customer_id INT UNIQUE NOT NULL, -- needed FOR the 1:1 CONNECTION 'UNIQUE'!!!
 address VARCHAR (1000),
 city VARCHAR (255) NOT NULL,
 province VARCHAR (255),
@@ -46,6 +52,12 @@ CONSTRAINT fk_customer_id FOREIGN KEY (customer_id) REFERENCES customers (custom
 INSERT INTO customers_addresses (customer_id,address,city,province,state,postal_code,country)
 VALUES (001,'25 Maritza blvd','Plovdiv','Plovdiv',NULL,4003,'Bulgaria'),
 (005,'9 Vitosha blvd','Sofia','Sofia',NULL,1000,'Bulgaria');
+
+INSERT INTO customers_addresses (customer_id,address,city,province,state,postal_code,country)
+VALUES (001,'25 Maritza blvd','Plovdiv','Plovdiv',NULL,4003,'Bulgaria'),
+(005,'9 Vitosha blvd','Sofia','Sofia',NULL,1000,'Bulgaria');
+
+TRUNCATE TABLE customers_addresses;
 
 -- Dropping the table
 DROP TABLE customers_addresses;
@@ -143,8 +155,7 @@ INSERT INTO
 -- 5) Create many:many relationship between orders and products_inventory table with the ordered quantity
 
 -- We need to create another table that will hold the primary keys of the two tables: orders and products_inventory
-CREATE TABLE 
-	orders_and_products (
+CREATE TABLE orders_and_products (
 		order_id INT REFERENCES orders (order_id) ON UPDATE CASCADE ON DELETE CASCADE,
 		product_id INT REFERENCES products_inventory (product_id) ON UPDATE CASCADE,
 		ordered_quantity INT NOT NULL,
@@ -182,94 +193,59 @@ WHERE is_order_completed = FALSE;
 -- Dropping the view
 DROP VIEW customers_active_orders;
 
--- 3) Create view customers_pending_payments: customer id and name with list of pending orders that are not payed, order date and total sum expected to be payed.
+-- 3) Create view customers_pending_payments: 
+-- customer id and name with list of orders that are not paid, order date and total sum expected to be paied.
 CREATE VIEW customers_pending_payments AS
-SELECT customer_id, customer_name, ARRAY_AGG (AL.order_id) as orders_list, is_order_paid, date_of_order, sum(total_sum)
-FROM 
-		(SELECT DISTINCT
-			c.customer_id, 
-			c.customer_name, 
-			o.order_id, 
-			o.is_order_paid, 
-			o.date_of_order, 
-			products_inventory.price_VAT_added * o_p.ordered_quantity as total_sum
-		FROM customers as c
-		INNER JOIN orders as o
-		ON 
-		c.customer_id = o.customer_id
-		LEFT JOIN orders_and_products as o_p
-		ON 
-			o.order_id = o_p.order_id
-		LEFT JOIN 
-			products_inventory
-		ON
-			o_p.product_id = products_inventory.product_id
-		 
-		WHERE 
-			o.is_order_paid = FALSE) AS AL	
-GROUP BY 
-	customer_id,
-	customer_name,
-	is_order_paid, 
-	date_of_order;
+SELECT c.customer_id, c.customer_name, o.date_of_order,o.is_order_completed, p.price_VAT_added, oap.ordered_quantity, SUM(p.price_VAT_added*oap.ordered_quantity) AS sum_total
+FROM customers c
+RIGHT JOIN orders o
+ON c.customer_id=o.customer_id
+RIGHT JOIN orders_and_products oap
+ON o.order_id=oap.order_id
+RIGHT JOIN products_inventory p
+ON oap.product_id = p.product_id
+GROUP BY c.customer_id, c.customer_name, o.date_of_order, o.is_order_completed ,p.price_vat_added , oap.ordered_quantity
+ORDER BY c.customer_id;
 
 -- Dropping the view
 DROP VIEW customers_pending_payments;
 
--- 4) Create view supplier_inventory: supplier id, name and phone with available products (qty > 0), quantity, price with and without VAT and the warehouse the item is located
+-- 4) Create view supplier_inventory: 
+-- supplier id, name and phone with available products (qty > 0), quantity, price with and without VAT and the warehouse the item is located
 CREATE VIEW supplier_inventory AS
-SELECT 
-	suppliers.supplier_id, supplier_name, supplier_phone, available_quantity, 
-	price_no_VAT, price_VAT_added, warehouse_name
-FROM suppliers
-FULL OUTER JOIN products_inventory as products
-ON 
-	suppliers.supplier_id = products.supplier_id
+SELECT s.supplier_id, s.supplier_name, s.supplier_phone, p.available_quantity, p.price_no_VAT, p.price_VAT_added, p.warehouse_name
+FROM suppliers s
+RIGHT OUTER JOIN products_inventory p
+ON s.supplier_id = p.supplier_id
 WHERE available_quantity > 0
 ORDER BY supplier_id;
 
 -- Dropping the view:
 DROP VIEW supplier_inventory;
 
--- 5) Create view customer_ordered_items: customer id and name with ordered product and product type
+-- 5) Create view customer_ordered_items: 
+-- customer id and name with ordered product and product type
 CREATE VIEW customer_ordered_items AS
-SELECT 
-	customer_id, customer_name, product_name, product_type
-FROM
-		(SELECT 
-			c_orders.customer_id, c_orders.customer_name, o_p.order_id, o_p.product_id 
-		FROM 
-				(SELECT 
-					c.customer_id, c.customer_name, o.order_id
-				FROM 
-					customers c
-				RIGHT OUTER JOIN 
-					orders o
-				ON
-					c.customer_id=o.customer_id
-				ORDER BY
-					customer_id) AS c_orders
-		LEFT OUTER JOIN orders_and_products AS o_p
-		ON 	
-			c_orders.order_id = o_p.order_id) AS orders_and_products_ids
-LEFT OUTER JOIN products_inventory
-ON 
-	orders_and_products_ids.product_id = products_inventory.product_id
-ORDER BY customer_id;
+SELECT c.customer_id, c.customer_name, p.product_name, p.product_type
+FROM customers c
+RIGHT OUTER JOIN orders o 
+ON c.customer_id = o.customer_id
+FULL OUTER JOIN orders_and_products oap 
+ON o.order_id = oap.order_id
+RIGHT OUTER JOIN products_inventory p
+ON oap.product_id = p.product_id
+ORDER BY c.customer_id;
 
 -- Dropping the view:
 DROP VIEW customer_ordered_items;
 
 -- 6) Create view phones: a union of all suppliers and customers ids, names and phone numbers
 CREATE VIEW phones AS
-	SELECT 
-		customer_id, customer_name, customer_phone
-	FROM customers
+SELECT customer_id, customer_name, customer_phone
+FROM customers
 UNION
-	SELECT 
-		supplier_id, supplier_name, supplier_phone
-	FROM
-		suppliers;
+SELECT supplier_id, supplier_name, supplier_phone
+FROM suppliers;
 	
 -- Dropping the view
 DROP VIEW phones;
@@ -279,22 +255,20 @@ DROP VIEW phones;
 -------------------------------------------------------------------------------------------------------------------------------------
 
 -- 1) Script: list of customers whos phone number is listed as phone number of another customer
-SELECT 
-	ARRAY_AGG(customer_id) AS customer_ids_duplicate_phones,
-	ARRAY_AGG(customer_name) AS customer_names_duplicate_phones,
-	customer_phone
+SELECT c.customer_id, c.customer_name, c.customer_phone
 FROM customers c
-WHERE customer_phone IS NOT NULL
-GROUP BY customer_phone;
+LEFT OUTER JOIN (SELECT customers.customer_id,customers.customer_name, customers.customer_phone FROM customers) AS customer_table_new
+ON c.customer_phone = customer_table_new.customer_phone
+AND c.customer_name <> customer_table_new.customer_name
+ORDER BY c.customer_name;
 
 -- 2) Script: using left and right joins, find customers without orders and orders without active customers
 
 -- Finding customers without orders:
-SELECT c.customer_id, customer_name
+SELECT c.customer_id, customer_name,o.order_id
 FROM customers c
 LEFT OUTER JOIN orders o
-ON
-	c.customer_id = o.customer_id
+ON c.customer_id = o.customer_id
 WHERE order_id IS NULL
 ORDER BY c.customer_id;
 
@@ -302,25 +276,21 @@ ORDER BY c.customer_id;
 SELECT o.order_id, c.customer_profile_status
 FROM customers c
 RIGHT OUTER JOIN orders o
-ON
-	c.customer_id = o.customer_id
+ON c.customer_id = o.customer_id
 WHERE c.customer_profile_status = FALSE;
 
 -- 3) Script: using full join, find customers without orders and orders without active customers
-
 -- Finding customers without orders
 SELECT c.customer_id, customer_name, o.order_id
 FROM customers c
 FULL OUTER JOIN orders o
-ON
-	c.customer_id = o.customer_id
+ON c.customer_id = o.customer_id
 ORDER BY c.customer_id;
 	
 -- Finding orders without active customers
 SELECT o.order_id, c.customer_profile_status
 FROM orders o
 FULL OUTER JOIN customers c
-ON
-	c.customer_id = o.customer_id
+ON c.customer_id = o.customer_id
 WHERE c.customer_profile_status = FALSE;
 
